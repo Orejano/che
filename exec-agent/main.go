@@ -3,9 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/eclipse/che/exec-agent/op"
+	"github.com/eclipse/che/exec-agent/auth"
 	"github.com/eclipse/che/exec-agent/process"
 	"github.com/eclipse/che/exec-agent/rest"
+	"github.com/eclipse/che/exec-agent/rpc"
 	"github.com/eclipse/che/exec-agent/term"
 	"github.com/gorilla/mux"
 	"log"
@@ -17,12 +18,12 @@ import (
 var (
 	AppHttpRoutes = []rest.RoutesGroup{
 		process.HttpRoutes,
-		op.HttpRoutes,
+		rpc.HttpRoutes,
 		term.HttpRoutes,
 	}
 
-	AppOpRoutes = []op.RoutesGroup{
-		process.OpRoutes,
+	AppOpRoutes = []rpc.RoutesGroup{
+		process.RpcRoutes,
 	}
 
 	serverAddress string
@@ -30,8 +31,26 @@ var (
 )
 
 func init() {
+	// Server configuration
 	flag.StringVar(&serverAddress, "addr", ":9000", "IP:PORT or :PORT the address to start the server on")
 	flag.StringVar(&staticFlag, "static", "./static/", "path to static content")
+
+	// Auth configuration
+	flag.BoolVar(&auth.Enabled, "enable-auth", false, "Whether authenticate on workspace master or not")
+	flag.StringVar(&auth.ApiEndpoint,
+		"auth-api-endpoint",
+		os.Getenv("CHE_API_ENDPOINT"),
+		"Auth api-endpoint, by default 'CHEAPI-ENDPOINT' environment variable is used for this")
+
+	// Process configuration
+	flag.IntVar(&process.CleanupPeriodInMinutes, "process-cleanup-period", 2, "How often processs cleanup will happen(in minutes)")
+	flag.IntVar(&process.CleanupThresholdInMinutes,
+		"process-lifetime",
+		60,
+		"How much time will dead and unused process live(in minutes), if -1 passed then processes won't be cleaned at all")
+	curDir, _ := os.Getwd()
+	curDir += string(os.PathSeparator) + "logs"
+	flag.StringVar(&process.LogsDir, "logs-dir", curDir, "Base directory for process logs")
 }
 
 func main() {
@@ -59,12 +78,12 @@ func main() {
 	for _, routesGroup := range AppOpRoutes {
 		fmt.Printf("%s:\n", routesGroup.Name)
 		for _, route := range routesGroup.Items {
-			fmt.Printf("✓ %s\n", route.Operation)
-			op.RegisterRoute(route)
+			fmt.Printf("✓ %s\n", route.Method)
+			rpc.RegisterRoute(route)
 		}
 	}
 
-	go process.NewCleaner().CleanupDeadUnusedProcesses()
+	go process.NewCleaner().CleanupPeriodically()
 	if term.ActivityTrackingEnabled {
 		go term.Activity.StartTracking()
 	}
